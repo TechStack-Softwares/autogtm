@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export async function GET(
   request: NextRequest,
@@ -8,10 +8,7 @@ export async function GET(
   try {
     const { id } = await params;
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     const { count, error } = await supabase
       .from('campaign_email_versions')
@@ -33,10 +30,7 @@ export async function POST(
   try {
     const { id } = await params;
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     const { data: campaign, error: campaignError } = await supabase
       .from('campaigns')

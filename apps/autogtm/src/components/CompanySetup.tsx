@@ -46,7 +46,10 @@ export function CompanySetup() {
         body: JSON.stringify({ url: importUrl }),
       });
 
-      if (!response.ok) throw new Error('Failed to import');
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Failed to import');
+      }
 
       const data = await response.json();
       setFormData({
@@ -60,11 +63,11 @@ export function CompanySetup() {
         title: 'Imported',
         description: 'Company info populated from URL. Review and edit as needed.',
       });
-    } catch {
+    } catch (error) {
       toast({
         variant: 'destructive',
         title: 'Import failed',
-        description: 'Could not extract company info. Try filling in manually.',
+        description: error instanceof Error ? error.message : 'Could not extract company info. Try filling in manually.',
       });
     } finally {
       setImporting(false);
@@ -83,7 +86,8 @@ export function CompanySetup() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to generate queries');
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Failed to generate queries');
       }
 
       const data = await response.json();
@@ -94,7 +98,7 @@ export function CompanySetup() {
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: 'Failed to generate queries. Please try again.',
+        description: error instanceof Error ? error.message : 'Failed to generate queries. Please try again.',
       });
     } finally {
       setLoading(false);

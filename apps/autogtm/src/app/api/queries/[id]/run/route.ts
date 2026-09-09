@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { startQueryRun } from '../../_lib/startQueryRun';
 
 export async function POST(
@@ -9,10 +9,7 @@ export async function POST(
   try {
     const { id: queryId } = await params;
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     const result = await startQueryRun(supabase, queryId);
 

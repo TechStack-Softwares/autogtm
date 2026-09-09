@@ -1,0 +1,89 @@
+services:
+  app:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:-}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3200}
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
+    ports:
+      - "3200:3200"
+    env_file:
+      - .env
+    environment:
+      INNGEST_DEV: "0"
+      INNGEST_BASE_URL: http://inngest:8288
+      INNGEST_SERVE_ORIGIN: http://app:3200
+      INNGEST_SERVE_PATH: /api/inngest
+    depends_on:
+      inngest:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3200/login').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  inngest:
+    image: inngest/inngest:latest
+    command:
+      - inngest
+      - start
+      - --sdk-url
+      - http://app:3200/api/inngest
+      - --poll-interval
+      - "30"
+    ports:
+      - "8288:8288"
+      - "8289:8289"
+    environment:
+      INNGEST_EVENT_KEY: ${INNGEST_EVENT_KEY:?Set INNGEST_EVENT_KEY in .env (openssl rand -hex 32)}
+      INNGEST_SIGNING_KEY: ${INNGEST_SIGNING_KEY:?Set INNGEST_SIGNING_KEY in .env (openssl rand -hex 32)}
+      INNGEST_POSTGRES_URI: postgres://inngest:${INNGEST_DB_PASSWORD:-inngest}@inngest-postgres:5432/inngest
+      INNGEST_REDIS_URI: redis://redis:6379
+    depends_on:
+      inngest-postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  inngest-postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: inngest
+      POSTGRES_USER: inngest
+      POSTGRES_PASSWORD: ${INNGEST_DB_PASSWORD:-inngest}
+    volumes:
+      - inngest_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inngest -d inngest"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  inngest_pg_data:
+  redis_data:

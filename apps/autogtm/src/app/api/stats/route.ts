@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 // Start of "today" in Eastern Time (the weekly outbound workflow runs on Thursdays ET),
 // returned as a UTC ISO string so it can be compared against campaign_routed_at.
@@ -18,10 +18,7 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const companyId = searchParams.get('company_id');
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     let queriesCount = 0;
     let leadsCount = 0;

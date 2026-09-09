@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export async function GET(
   request: NextRequest,
@@ -8,10 +8,7 @@ export async function GET(
   try {
     const { id } = await params;
     
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     const { data: company, error } = await supabase
       .from('companies')
@@ -39,10 +36,7 @@ export async function PATCH(
     const { id } = await params;
     const body = await request.json();
     
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     const updateData: Record<string, any> = {
       updated_at: new Date().toISOString(),
@@ -88,10 +82,7 @@ export async function DELETE(
   try {
     const { id } = await params;
     
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     // Delete company (cascades to queries, leads, campaigns via FK)
     const { error } = await supabase

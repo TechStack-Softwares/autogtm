@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { z } from 'zod';
 import { regenerateEmailSequenceWithFeedback } from '@autogtm/core/ai/generateEmailCopy';
 import { resolveOutreachPromptForLead } from '@/lib/outreachPromptResolver';
@@ -17,10 +17,7 @@ export async function POST(
     const { id: campaignId } = await params;
     const payload = RegeneratePayloadSchema.parse(await request.json());
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     const [{ data: campaign }, { data: emails }, { data: lead }] = await Promise.all([
       supabase

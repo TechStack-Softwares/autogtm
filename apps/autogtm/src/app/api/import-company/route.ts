@@ -43,9 +43,8 @@ Return ONLY the raw JSON object. No markdown, no code fences, no explanation.`,
     });
   } catch (error) {
     console.error('Error importing company:', error);
-    return NextResponse.json(
-      { error: 'Failed to import company data' },
-      { status: 500 }
-    );
+    const message = error instanceof Error ? error.message : 'Failed to import company data';
+    const status = /insufficient_quota|credits remaining|429/.test(message) ? 402 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

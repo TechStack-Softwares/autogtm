@@ -83,24 +83,37 @@ Accounts needed:
 - [Exa.ai](https://exa.ai) — lead discovery via Websets API
 - [Instantly.ai](https://instantly.ai) — email campaign sending
 - [OpenAI](https://platform.openai.com) — AI enrichment and generation
-- [Inngest](https://inngest.com) — background job scheduling
+- [Inngest](https://inngest.com) — background jobs (self-hosted in Docker / CLI, or Inngest Cloud)
 - [Resend](https://resend.com) — daily digest emails (optional)
 
-Locally: Node.js 18+ and npm.
+Locally: Node.js 18+ and npm. [Docker](https://docs.docker.com/get-docker/) if you use the Compose stack.
 
-### Setup
+### Supabase (required)
+
+Create a project at [supabase.com](https://supabase.com) (or [self-host Supabase](https://supabase.com/docs/guides/self-hosting/docker)), then:
+
+1. Open **SQL Editor**
+2. Paste `[schema.sql](./schema.sql)` and run it
+
+This creates all required tables, indexes, RLS policies, and helper functions.
+
+If you already have a project from an earlier version, apply incremental migrations from `[migrations/](./migrations/)` instead — they are safe to re-run (`IF NOT EXISTS` guarded).
+
+In **Authentication → URL Configuration**:
+
+- **Site URL:** your app origin (`http://localhost:3200` locally, `https://your.domain` in production)
+- **Redirect URLs:** `{origin}/auth/callback` and `{origin}/login`
+
+### Local development
 
 ```bash
-# Clone and install
-git clone https://github.com/your-org/autogtm.git
+git clone https://github.com/TechStack-Softwares/autogtm.git
 cd autogtm
 npm install
 
-# Configure environment
 cp apps/autogtm/.env.example apps/autogtm/.env.local
 # Fill in values in .env.local
 
-# Run
 npm run dev
 ```
 
@@ -112,31 +125,93 @@ For background jobs, run the Inngest dev server in a separate terminal:
 npx inngest-cli@latest dev
 ```
 
-**Supabase Setup**
+## Self-hosting
 
-Create a new Supabase project at [supabase.com](https://supabase.com), then:
+Docker Compose runs the Next.js app plus a self-hosted [Inngest](https://www.inngest.com/docs/self-hosting) server (Postgres + Redis for job state). You still need accounts for **Exa**, **Instantly**, **OpenAI**, and optionally **Resend** — those APIs have no in-repo replacements.
 
-1. Open your project dashboard
-2. Go to **SQL Editor**
-3. Paste the contents of `[schema.sql](./schema.sql)` and run it
+**What this stack hosts**
 
-This creates all required tables, indexes, RLS policies, and helper functions.
+| Service | Where it runs |
+| --- | --- |
+| Next.js app | `app` container, port 3200 |
+| Inngest (jobs + dashboard) | `inngest` container, port 8288 |
+| Inngest Postgres / Redis | local volumes, not published |
+| Database + Auth | your Supabase project (cloud or official self-hosted Docker) |
 
-If you already have a Supabase project from an earlier version, apply incremental migrations from `[migrations/](./migrations/)` instead — they're safe to re-run (`IF NOT EXISTS` guarded).
+```bash
+cp .env.example .env
+```
 
+Fill in `.env`:
 
+1. **Supabase** URL and keys from Project Settings → API Keys.
+2. **Inngest keys** — hex strings with an even length:
 
-## Deployment
+   ```bash
+   openssl rand -hex 32
+   python -c "import secrets; print(secrets.token_hex(32))"
+   ```
 
-autogtm is a standard Next.js app. Deploy to any platform that supports it:
+   Use one value for `INNGEST_SIGNING_KEY` and a different one for `INNGEST_EVENT_KEY`.
+3. **Exa / Instantly / OpenAI** API keys. Resend is optional (daily digests).
+4. Set `NEXT_PUBLIC_APP_URL` to the public origin users will open (not `http://app:3200`).
 
-- **Vercel** — recommended, zero-config Next.js deployment
+Then:
 
-Make sure to:
+```bash
+docker compose up --build
+```
 
-1. Set all environment variables in your hosting platform
-2. Connect your Inngest app to receive webhooks at `/api/inngest`
-3. Ensure your Supabase project is on a paid plan if you need higher limits
+- App: [http://localhost:3200](http://localhost:3200)
+- Inngest dashboard: [http://localhost:8288](http://localhost:8288)
+
+Create an account on `/login` with one of the `INVITE_CODES` from `.env`.
+
+`NEXT_PUBLIC_*` variables are compiled into the image. Rebuild after changing Supabase URL, anon/publishable key, app URL, or Google client ID:
+
+```bash
+docker compose up --build
+```
+
+### Without Docker
+
+You can run a production Node process and a local Inngest server instead of Compose.
+
+```bash
+cp apps/autogtm/.env.example apps/autogtm/.env.local
+```
+
+Set the same keys as above, plus:
+
+```
+INNGEST_DEV=0
+INNGEST_BASE_URL=http://localhost:8288
+```
+
+Generate hex keys, then in two terminals:
+
+```bash
+npm install
+npm run build
+
+# terminal 1 — Inngest (dashboard at http://localhost:8288)
+npx inngest-cli@latest start --sdk-url http://localhost:3200/api/inngest --event-key YOUR_EVENT_KEY --signing-key YOUR_SIGNING_KEY
+
+# terminal 2 — app at http://localhost:3200
+npm run start --workspace=autogtm
+```
+
+### Production notes
+
+- Put the app behind HTTPS (Caddy, nginx, Traefik, or a managed reverse proxy). Point DNS at the host and set `NEXT_PUBLIC_APP_URL=https://your.domain`.
+- Change `INNGEST_DB_PASSWORD` and both Inngest keys before exposing the host.
+- Do not publish Inngest (`8288`) to the public internet unless you intend to. The app talks to it on the Docker network.
+- Pin `inngest/inngest:latest` to a version tag once you are happy with a release.
+- Fully private data plane: run [Supabase's Docker stack](https://supabase.com/docs/guides/self-hosting/docker) on the same host/VPC and set `NEXT_PUBLIC_SUPABASE_URL` to a URL the **browser** can reach (not an internal Compose hostname).
+
+### Vercel (alternative)
+
+You can still deploy the Next.js app to Vercel and use [Inngest Cloud](https://www.inngest.com) instead of the Compose Inngest service. Set the same environment variables in the Vercel project, connect the Inngest app to `/api/inngest`, and use a paid Supabase plan if you need higher limits.
 
 ## License
 

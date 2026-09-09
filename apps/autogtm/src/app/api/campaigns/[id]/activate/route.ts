@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { activateCampaign } from '@autogtm/core/clients/instantly';
 import { sendDraftCampaignForLead } from '@autogtm/core/campaigns/createCampaignForPersona';
 
@@ -10,10 +10,7 @@ export async function POST(
   try {
     const { id } = await params;
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     const { data: campaign, error } = await supabase
       .from('campaigns')

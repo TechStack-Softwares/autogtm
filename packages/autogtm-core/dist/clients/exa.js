@@ -24,7 +24,8 @@ export async function createWebset(params) {
         count: params.count || 25,
     };
     if (params.criteria && params.criteria.length > 0) {
-        searchParams.criteria = params.criteria.map((c) => ({ description: c }));
+        // Exa rejects websets with > 5 criteria (400 Validation Error)
+        searchParams.criteria = params.criteria.slice(0, 5).map((c) => ({ description: c }));
     }
     const websetParams = {
         search: searchParams,
@@ -115,7 +116,8 @@ export async function refreshWebset(websetId, query, additionalCount, criteria) 
         behaviour: 'override',
     };
     if (criteria && criteria.length > 0) {
-        searchParams.criteria = criteria.map((c) => ({ description: c }));
+        // Exa rejects websets with > 5 criteria (400 Validation Error)
+        searchParams.criteria = criteria.slice(0, 5).map((c) => ({ description: c }));
     }
     await exa.websets.searches.create(websetId, searchParams);
     await waitForWebset(websetId);

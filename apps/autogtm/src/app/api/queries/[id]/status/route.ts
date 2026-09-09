@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { getExaClient } from '@autogtm/core/clients/exa';
 
 export async function GET(
@@ -9,10 +9,7 @@ export async function GET(
   try {
     const { id: queryId } = await params;
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     // Get the query status
     const { data: query, error: queryError } = await supabase

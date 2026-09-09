@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { z } from 'zod';
 
 const CampaignStepInputSchema = z.object({
@@ -56,10 +56,7 @@ export async function GET(
   try {
     const { id } = await params;
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     const { data: emails, error } = await supabase
       .from('campaign_emails')
@@ -85,10 +82,7 @@ export async function PUT(
     const payload = await request.json();
     const sequence = CampaignSequenceInputSchema.parse(payload?.emails || []);
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     const { data: campaign, error: campaignError } = await supabase
       .from('campaigns')

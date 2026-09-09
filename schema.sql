@@ -22,6 +22,7 @@ create table companies (
   auto_add_run_hour_utc integer not null default 14 check (auto_add_run_hour_utc between 0 and 23),
   auto_add_digest_email text,
   auto_add_regenerate_drafts boolean not null default false,
+  system_enabled boolean not null default false,
   agent_notes text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -226,14 +227,17 @@ create table allowed_users (
 -- Helper function: increment campaign lead count
 -- ============================================================
 create or replace function increment_campaign_leads(campaign_id_input uuid)
-returns void as $$
+returns void
+language plpgsql
+set search_path = public
+as $$
 begin
   update campaigns
   set leads_count = leads_count + 1,
       updated_at = now()
   where id = campaign_id_input;
 end;
-$$ language plpgsql;
+$$;
 
 -- ============================================================
 -- Row Level Security
@@ -245,41 +249,88 @@ alter table exa_queries enable row level security;
 alter table webset_runs enable row level security;
 alter table campaigns enable row level security;
 alter table campaign_emails enable row level security;
+alter table campaign_email_versions enable row level security;
 alter table leads enable row level security;
 alter table daily_digests enable row level security;
 alter table auto_add_runs enable row level security;
 alter table allowed_users enable row level security;
 
--- Allow authenticated users full access (adjust as needed for your use case)
+-- Signed-in users can manage app data. API routes also use the secret/service
+-- role key, which bypasses RLS. Do not grant write access to anon.
 create policy "Authenticated users can manage companies"
-  on companies for all using (auth.role() = 'authenticated');
+  on companies for all
+  to authenticated
+  using (true)
+  with check (true);
 
 create policy "Authenticated users can manage company_updates"
-  on company_updates for all using (auth.role() = 'authenticated');
+  on company_updates for all
+  to authenticated
+  using (true)
+  with check (true);
 
 create policy "Authenticated users can manage outreach_prompts"
-  on outreach_prompts for all using (auth.role() = 'authenticated');
+  on outreach_prompts for all
+  to authenticated
+  using (true)
+  with check (true);
 
 create policy "Authenticated users can manage exa_queries"
-  on exa_queries for all using (auth.role() = 'authenticated');
+  on exa_queries for all
+  to authenticated
+  using (true)
+  with check (true);
 
 create policy "Authenticated users can manage webset_runs"
-  on webset_runs for all using (auth.role() = 'authenticated');
+  on webset_runs for all
+  to authenticated
+  using (true)
+  with check (true);
 
 create policy "Authenticated users can manage campaigns"
-  on campaigns for all using (auth.role() = 'authenticated');
+  on campaigns for all
+  to authenticated
+  using (true)
+  with check (true);
 
 create policy "Authenticated users can manage campaign_emails"
-  on campaign_emails for all using (auth.role() = 'authenticated');
+  on campaign_emails for all
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can manage campaign_email_versions"
+  on campaign_email_versions for all
+  to authenticated
+  using (true)
+  with check (true);
 
 create policy "Authenticated users can manage leads"
-  on leads for all using (auth.role() = 'authenticated');
+  on leads for all
+  to authenticated
+  using (true)
+  with check (true);
 
 create policy "Authenticated users can manage daily_digests"
-  on daily_digests for all using (auth.role() = 'authenticated');
+  on daily_digests for all
+  to authenticated
+  using (true)
+  with check (true);
 
 create policy "Authenticated users can manage auto_add_runs"
-  on auto_add_runs for all using (auth.role() = 'authenticated');
+  on auto_add_runs for all
+  to authenticated
+  using (true)
+  with check (true);
 
 create policy "Authenticated users can read allowed_users"
-  on allowed_users for select using (auth.role() = 'authenticated');
+  on allowed_users for select
+  to authenticated
+  using (true);
+
+-- Explicit Data API grants. New projects (mid-2026+) no longer auto-expose
+-- public tables to anon/authenticated/service_role.
+grant usage on schema public to anon, authenticated, service_role;
+grant select, insert, update, delete on all tables in schema public to authenticated, service_role;
+grant usage, select on all sequences in schema public to authenticated, service_role;
+grant execute on all functions in schema public to authenticated, service_role;

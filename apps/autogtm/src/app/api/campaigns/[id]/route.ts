@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export async function PATCH(
   request: NextRequest,
@@ -13,10 +13,7 @@ export async function PATCH(
     if (typeof body.name === 'string') updates.name = body.name.trim();
     if (typeof body.persona === 'string' || body.persona === null) updates.persona = body.persona;
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     const { data: campaign, error: findError } = await supabase
       .from('campaigns')

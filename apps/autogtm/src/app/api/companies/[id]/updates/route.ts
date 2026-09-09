@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { inngest } from '@/inngest/client';
 import { startQueryRun } from '../../../queries/_lib/startQueryRun';
 
@@ -12,10 +12,7 @@ export async function GET(
   try {
     const { id: companyId } = await params;
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     const { data: updates, error } = await supabase
       .from('company_updates')
@@ -48,10 +45,7 @@ export async function POST(
       return NextResponse.json({ error: 'Content is required' }, { status: 400 });
     }
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     let outreachPromptSnapshot: string | null = null;
     let outreachPromptId: string | null = outreach_prompt_id ?? null;
@@ -165,10 +159,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'update_id is required' }, { status: 400 });
     }
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     const { error } = await supabase
       .from('company_updates')

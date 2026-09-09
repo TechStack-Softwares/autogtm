@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export async function GET(
   request: NextRequest,
@@ -7,10 +7,7 @@ export async function GET(
 ) {
   try {
     const { id: companyId } = await params;
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     const { data: prompts, error } = await supabase
       .from('outreach_prompts')
@@ -45,10 +42,7 @@ export async function POST(
       return NextResponse.json({ error: 'Prompt content is too long' }, { status: 400 });
     }
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     const { data: prompt, error } = await supabase
       .from('outreach_prompts')

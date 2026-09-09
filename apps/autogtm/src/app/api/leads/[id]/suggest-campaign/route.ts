@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { determineCampaignForLead } from '@autogtm/core/ai/determineCampaign';
 import { setSuggestedCampaign, markLeadSkipped, getCampaignBySourceLeadId } from '@autogtm/core/db/autogtmDbCalls';
 import { createDraftCampaignForLead } from '@autogtm/core/campaigns/createCampaignForPersona';
@@ -12,10 +12,7 @@ export async function POST(
   try {
     const { id: leadId } = await params;
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    const supabase = createAdminClient();
 
     // Get lead with enrichment data
     const { data: lead, error: leadError } = await supabase

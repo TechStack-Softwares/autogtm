@@ -24,9 +24,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ queries });
   } catch (error) {
     console.error('Error generating queries:', error);
-    return NextResponse.json(
-      { error: 'Failed to generate queries' },
-      { status: 500 }
-    );
+    const message = error instanceof Error ? error.message : 'Failed to generate queries';
+    const status = /insufficient_quota|credits remaining|429/.test(message) ? 402 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }
