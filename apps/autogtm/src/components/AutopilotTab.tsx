@@ -179,7 +179,8 @@ export function AutopilotTab({ company, onCompanyUpdated }: AutopilotTabProps) {
 		setRunning(true);
 		try {
 			const res = await fetch(`/api/companies/${company.id}/auto-add/run-now`, { method: 'POST' });
-			if (!res.ok) throw new Error('Failed to trigger');
+			const data = await res.json().catch(() => ({} as { error?: string }));
+			if (!res.ok) throw new Error(data.error || 'Failed to trigger');
 			toast({ title: 'Autopilot running', description: `Processing up to ${dailyLimit} leads. Digest lands in a minute.` });
 			setTimeout(() => loadRuns(), 3000);
 			setTimeout(() => loadRuns(), 10000);

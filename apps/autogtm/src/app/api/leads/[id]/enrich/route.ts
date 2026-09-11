@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { inngest } from '@/inngest/client';
+import { sendInngestEvent, isInngestUnreachable, INNGEST_UNAVAILABLE_MESSAGE } from '@/inngest/client';
 
 export async function POST(
   request: NextRequest,
@@ -38,7 +38,7 @@ export async function POST(
       .eq('id', leadId);
 
     // Trigger enrichment
-    await inngest.send({
+    await sendInngestEvent({
       name: 'autogtm/lead.created',
       data: {
         leadId: lead.id,
@@ -52,6 +52,9 @@ export async function POST(
     return NextResponse.json({ success: true, message: 'Enrichment started' });
   } catch (error) {
     console.error('Error triggering enrichment:', error);
+    if (isInngestUnreachable(error)) {
+      return NextResponse.json({ error: INNGEST_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
     return NextResponse.json(
       { error: 'Failed to trigger enrichment' },
       { status: 500 }

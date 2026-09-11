@@ -86,7 +86,7 @@ Accounts needed:
 - [Inngest](https://inngest.com) — background jobs (self-hosted in Docker / CLI, or Inngest Cloud)
 - [Resend](https://resend.com) — daily digest emails (optional)
 
-Locally: Node.js 18+ and npm. [Docker](https://docs.docker.com/get-docker/) if you use the Compose stack.
+Locally: Node.js 20+ and npm. [Docker](https://docs.docker.com/get-docker/) if you use the Compose stack. `@supabase/supabase-js` 2.110+ requires Node 22, so this repo pins `2.109.0`.
 
 ### Supabase (required)
 
@@ -119,11 +119,14 @@ npm run dev
 
 The app runs at [http://localhost:3200](http://localhost:3200).
 
-For background jobs, run the Inngest dev server in a separate terminal:
+For background jobs (including **Run now** on a lead brief), start the Inngest dev server in a second terminal:
 
 ```bash
-npx inngest-cli@latest dev
+npm run dev:inngest
+# or: npx inngest-cli@latest dev
 ```
+
+Do **not** set `INNGEST_DEV=0` or `INNGEST_BASE_URL` in `apps/autogtm/.env.local` for this setup. Those are only for self-hosted Inngest (`docker compose` or `inngest-cli start`). With them set, `inngest.send()` talks to `localhost:8288` in production mode and fails with `ECONNREFUSED` if that server is not running.
 
 ## Self-hosting
 

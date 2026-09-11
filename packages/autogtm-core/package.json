@@ -23,7 +23,7 @@
     "format": "prettier --write \"**/*.{ts,tsx,md}\""
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.6",
+    "@supabase/supabase-js": "2.109.0",
     "exa-js": "^1.4.9",
     "ioredis": "^5.4.1",
     "openai": "^4.77.0",

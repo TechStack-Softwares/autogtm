@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { inngest } from '@/inngest/client';
+import { sendInngestEvent, isInngestUnreachable, INNGEST_UNAVAILABLE_MESSAGE } from '@/inngest/client';
 import { startQueryRun } from '../../../queries/_lib/startQueryRun';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -83,10 +83,23 @@ export async function POST(
       return NextResponse.json({ update: data, mode: 'queue' });
     }
 
-    await inngest.send({
-      name: 'autogtm/queries.generate-for-instruction',
-      data: { companyId, instructionId: data.id },
-    });
+    try {
+      await sendInngestEvent({
+        name: 'autogtm/queries.generate-for-instruction',
+        data: { companyId, instructionId: data.id },
+      });
+    } catch (sendError) {
+      console.error('Error sending generate-for-instruction event:', sendError);
+      if (isInngestUnreachable(sendError)) {
+        return NextResponse.json({
+          update: data,
+          mode: 'run_now',
+          run_now: { started: false, reason: 'inngest_unavailable' },
+          error: INNGEST_UNAVAILABLE_MESSAGE,
+        }, { status: 202 });
+      }
+      throw sendError;
+    }
 
     let queryId: string | null = null;
     for (let i = 0; i < 15; i++) {
@@ -143,6 +156,9 @@ export async function POST(
     });
   } catch (error) {
     console.error('Error creating update:', error);
+    if (isInngestUnreachable(error)) {
+      return NextResponse.json({ error: INNGEST_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
     return NextResponse.json({ error: 'Failed to create update' }, { status: 500 });
   }
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { inngest } from '@/inngest/client';
+import { sendInngestEvent, isInngestUnreachable, INNGEST_UNAVAILABLE_MESSAGE } from '@/inngest/client';
 
 export async function POST(
   request: NextRequest,
@@ -34,7 +34,7 @@ export async function POST(
     }
 
     // Trigger the add-to-campaign job
-    await inngest.send({
+    await sendInngestEvent({
       name: 'autogtm/lead.add-to-campaign',
       data: {
         leadId: lead.id,
@@ -45,6 +45,9 @@ export async function POST(
     return NextResponse.json({ success: true, message: 'Sending lead campaign' });
   } catch (error) {
     console.error('Error adding lead to campaign:', error);
+    if (isInngestUnreachable(error)) {
+      return NextResponse.json({ error: INNGEST_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
     return NextResponse.json(
       { error: 'Failed to add lead to campaign' },
       { status: 500 }

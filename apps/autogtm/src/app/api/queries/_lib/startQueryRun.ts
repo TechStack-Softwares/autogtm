@@ -1,5 +1,5 @@
 import { getExaClient } from '@autogtm/core/clients/exa';
-import { inngest } from '@/inngest/client';
+import { sendInngestEvent } from '@/inngest/client';
 
 export async function startQueryRun(supabase: any, queryId: string): Promise<{ websetId: string; status: 'running'; message: string }> {
   const { data: query, error: queryError } = await supabase
@@ -59,7 +59,7 @@ export async function startQueryRun(supabase: any, queryId: string): Promise<{ w
     console.error('Error creating webset run:', runError);
   }
 
-  await inngest.send({
+  await sendInngestEvent({
     name: 'autogtm/webset.created',
     data: {
       queryId,

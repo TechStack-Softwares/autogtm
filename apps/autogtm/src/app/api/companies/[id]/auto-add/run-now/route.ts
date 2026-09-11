@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { inngest } from '@/inngest/client';
+import { sendInngestEvent, isInngestUnreachable, INNGEST_UNAVAILABLE_MESSAGE } from '@/inngest/client';
 
 /**
  * Manually trigger the Autopilot sweep for a single company.
@@ -27,7 +27,7 @@ export async function POST(
       return NextResponse.json({ error: 'Company not found' }, { status: 404 });
     }
 
-    const result = await inngest.send({
+    const result = await sendInngestEvent({
       name: 'autogtm/auto-add.sweep-company',
       data: { companyId, trigger: 'manual' },
     });
@@ -35,6 +35,9 @@ export async function POST(
     return NextResponse.json({ success: true, eventIds: result.ids });
   } catch (error) {
     console.error('Error triggering auto-add sweep:', error);
+    if (isInngestUnreachable(error)) {
+      return NextResponse.json({ error: INNGEST_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
     return NextResponse.json(
       { error: 'Failed to trigger auto-add sweep' },
       { status: 500 }

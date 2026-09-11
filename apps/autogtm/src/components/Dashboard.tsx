@@ -877,6 +877,12 @@ export function Dashboard({ userEmail }: DashboardProps) {
           title: 'Run started',
           description: 'Query is running now. Lead extraction and enrichment are in progress.',
         });
+      } else if (data.run_now?.reason === 'inngest_unavailable') {
+        toast({
+          variant: 'destructive',
+          title: 'Instruction saved, but Inngest is not running',
+          description: data.error || 'Start Inngest with npm run dev:inngest, then retry Run now.',
+        });
       } else if (response.status === 202 || data.run_now?.reason === 'query_not_ready') {
         toast({
           variant: 'destructive',

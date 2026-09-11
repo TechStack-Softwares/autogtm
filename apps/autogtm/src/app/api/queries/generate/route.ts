@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { inngest } from '@/inngest/client';
+import { sendInngestEvent, isInngestUnreachable, INNGEST_UNAVAILABLE_MESSAGE } from '@/inngest/client';
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,14 +10,14 @@ export async function POST(request: NextRequest) {
     }
 
     if (instructionId) {
-      await inngest.send({
+      await sendInngestEvent({
         name: 'autogtm/queries.generate-for-instruction',
         data: { companyId, instructionId },
       });
       return NextResponse.json({ success: true, message: 'Instruction-specific query generation started' });
     }
 
-    await inngest.send({
+    await sendInngestEvent({
       name: 'autogtm/queries.generate',
       data: { companyId },
     });
@@ -25,6 +25,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, message: 'Query generation started' });
   } catch (error) {
     console.error('Error triggering query generation:', error);
+    if (isInngestUnreachable(error)) {
+      return NextResponse.json({ error: INNGEST_UNAVAILABLE_MESSAGE }, { status: 503 });
+    }
     return NextResponse.json({ error: 'Failed to trigger query generation' }, { status: 500 });
   }
 }
