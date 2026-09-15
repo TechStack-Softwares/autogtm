@@ -45,7 +45,7 @@ export const AutoAddRunSchema = z.object({
   digest_sent: z.boolean().default(false),
   digest_error: z.string().nullable().optional(),
   error: z.string().nullable().optional(),
-  trigger: z.enum(['cron', 'manual']).default('cron'),
+  trigger: z.enum(['cron', 'manual', 'catchup']).default('cron'),
 });
 export type AutoAddRun = z.infer<typeof AutoAddRunSchema>;
 
@@ -73,9 +73,22 @@ export const WebsetRunSchema = z.object({
 });
 export type WebsetRun = z.infer<typeof WebsetRunSchema>;
 
-// Lead category enum
-export const LeadCategorySchema = z.enum(['influencer', 'coach', 'blog', 'agency', 'podcast', 'other']);
+// Lead category enum — must match leads_category_check in schema.sql
+export const LEAD_CATEGORIES = ['influencer', 'coach', 'blog', 'agency', 'podcast', 'other'] as const;
+export const LeadCategorySchema = z.enum(LEAD_CATEGORIES);
 export type LeadCategory = z.infer<typeof LeadCategorySchema>;
+
+/** Map free-text / model-invented labels onto the DB check constraint. */
+export function normalizeLeadCategory(raw: unknown): LeadCategory {
+  const s = String(raw ?? '').toLowerCase().trim();
+  if ((LEAD_CATEGORIES as readonly string[]).includes(s)) return s as LeadCategory;
+  if (/\b(influencer|creator|youtuber|tiktoker|streamer|educator)\b/.test(s)) return 'influencer';
+  if (/\bcoach\b/.test(s)) return 'coach';
+  if (/\b(blog|blogger|newsletter|writer|journalist)\b/.test(s)) return 'blog';
+  if (/\b(agency|consultancy|consulting|studio)\b/.test(s)) return 'agency';
+  if (/\bpodcast\b/.test(s)) return 'podcast';
+  return 'other';
+}
 
 // Lead enrichment status enum
 export const EnrichmentStatusSchema = z.enum(['pending', 'enriching', 'enriched', 'failed']);

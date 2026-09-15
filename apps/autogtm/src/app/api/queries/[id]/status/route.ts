@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { getExaClient } from '@autogtm/core/clients/exa';
+import { getExaClient, isSearchFallbackId } from '@autogtm/core/clients/exa';
 
 export async function GET(
   request: NextRequest,
@@ -33,6 +33,7 @@ export async function GET(
       return NextResponse.json({
         status: query.status,
         leadsCreated: leadsCount || 0,
+        resultsCount: leadsCount || 0,
         completedAt: query.last_run_at,
       });
     }
@@ -50,6 +51,13 @@ export async function GET(
       return NextResponse.json({
         status: 'running',
         progress: { found: 0, completion: 0 },
+      });
+    }
+
+    if (isSearchFallbackId(websetRun.webset_id)) {
+      return NextResponse.json({
+        status: websetRun.status === 'completed' ? 'completed' : 'running',
+        progress: { found: websetRun.items_found || 0, completion: websetRun.status === 'completed' ? 100 : 0 },
       });
     }
 

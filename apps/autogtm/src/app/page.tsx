@@ -255,7 +255,7 @@ export default function LandingPage() {
               {
                 num: '4',
                 title: 'Autopilot sends, or you review first',
-                desc: 'With Autopilot on, each morning at 10am ET the top N qualifying leads are auto-added to their Instantly campaigns, and a digest email lands in your inbox summarizing exactly what went out. Or review every draft manually. Your call.',
+                desc: 'With Autopilot on, the top N qualifying leads are auto-added at the scheduled hour (default 10am ET), remaining daily quota is filled as more leads become ready, and a digest email lands in your inbox summarizing the scheduled sweep. Or review every draft manually. Your call.',
               },
             ].map((item, i) => (
               <div key={item.num} className="flex gap-5 sm:gap-6">
@@ -304,7 +304,7 @@ export default function LandingPage() {
               {
                 icon: Clock,
                 title: 'Runs on a daily schedule',
-                desc: 'Morning: fresh searches and lead discovery. 10am ET: Autopilot sweeps the backlog and auto-sends top picks with a digest email. Hourly: analytics sync back from Instantly.',
+                desc: 'Hourly: fresh searches (capped per company) and lead enrichment. Scheduled hour: Autopilot sends top picks with a digest, then catch-up fills remaining quota. Analytics sync back from Instantly every hour.',
               },
               {
                 icon: Zap,

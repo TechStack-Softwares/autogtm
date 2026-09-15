@@ -1,7 +1,16 @@
-import { getExaClient } from '@autogtm/core/clients/exa';
+import { discoverLeads, formatExaError } from '@autogtm/core/clients/exa';
 import { sendInngestEvent } from '@/inngest/client';
+import { ingestSearchHits } from './ingestSearchHits';
 
-export async function startQueryRun(supabase: any, queryId: string): Promise<{ websetId: string; status: 'running'; message: string }> {
+export { formatExaError };
+
+export async function startQueryRun(supabase: any, queryId: string): Promise<{
+  websetId: string;
+  status: 'running' | 'completed';
+  message: string;
+  mode: 'webset' | 'search';
+  leadsCreated?: number;
+}> {
   const { data: query, error: queryError } = await supabase
     .from('exa_queries')
     .select('*')
@@ -17,37 +26,44 @@ export async function startQueryRun(supabase: any, queryId: string): Promise<{ w
     .update({ status: 'running' })
     .eq('id', queryId);
 
-  const exa = getExaClient();
-
-  const websetParams: any = {
-    search: {
+  let discovery;
+  try {
+    discovery = await discoverLeads({
       query: query.query,
       count: 25,
-    },
-    enrichments: [
-      {
-        description: 'Find the email address for this person or creator',
-        format: 'email',
-      },
-      {
-        description: 'Extract the follower or subscriber count if visible',
-        format: 'number',
-      },
-    ],
-  };
-
-  if (query.criteria && query.criteria.length > 0) {
-    // Exa rejects websets with > 5 criteria (400 Validation Error)
-    websetParams.search.criteria = query.criteria.slice(0, 5).map((c: string) => ({ description: c }));
+      criteria: query.criteria,
+      enrichments: [
+        { description: 'Find the email address for this person or creator', format: 'email' },
+        { description: 'Extract the follower or subscriber count if visible', format: 'number' },
+      ],
+    });
+  } catch (error) {
+    await supabase.from('exa_queries').update({ status: 'failed' }).eq('id', queryId);
+    throw new Error(formatExaError(error));
   }
 
-  const webset = await exa.websets.create(websetParams);
+  if (discovery.mode === 'search') {
+    const ingested = await ingestSearchHits({
+      supabase,
+      queryId,
+      companyId: query.company_id,
+      hits: discovery.hits,
+      sendLeadEvents: (events) => sendInngestEvent(events),
+    });
+    return {
+      websetId: ingested.websetId,
+      status: 'completed',
+      mode: 'search',
+      leadsCreated: ingested.leadsCreated,
+      message: `Websets is not on this Exa plan; used regular search instead. Found ${ingested.itemsFound} pages, created ${ingested.leadsCreated} leads.`,
+    };
+  }
 
   const { data: websetRun, error: runError } = await supabase
     .from('webset_runs')
     .insert({
       query_id: queryId,
-      webset_id: webset.id,
+      webset_id: discovery.websetId,
       status: 'running',
       items_found: 0,
       started_at: new Date().toISOString(),
@@ -63,14 +79,15 @@ export async function startQueryRun(supabase: any, queryId: string): Promise<{ w
     name: 'autogtm/webset.created',
     data: {
       queryId,
-      websetId: webset.id,
+      websetId: discovery.websetId,
       websetRunId: websetRun?.id,
     },
   });
 
   return {
-    websetId: webset.id,
+    websetId: discovery.websetId,
     status: 'running',
+    mode: 'webset',
     message: 'Search started. Lead extraction will happen in background.',
   };
 }

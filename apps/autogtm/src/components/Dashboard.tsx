@@ -368,7 +368,8 @@ export function Dashboard({ userEmail }: DashboardProps) {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to start query');
+        const data = await response.json().catch(() => ({} as { error?: string }));
+        throw new Error(data.error || 'Failed to start query');
       }
 
       // Poll for progress
@@ -431,10 +432,11 @@ export function Dashboard({ userEmail }: DashboardProps) {
         const { [queryId]: _, ...rest } = prev;
         return rest;
       });
+      setQueries((prev) => prev.map((q) => (q.id === queryId ? { ...q, status: 'failed' } : q)));
       toast({
         variant: 'destructive',
         title: 'Error',
-        description: 'Failed to run query. Please try again.',
+        description: error instanceof Error ? error.message : 'Failed to run query. Please try again.',
       });
     }
   };
@@ -864,7 +866,7 @@ export function Dashboard({ userEmail }: DashboardProps) {
       if (mode === 'queue') {
         toast({
           title: 'Instruction queued',
-          description: 'Saved. It will be picked up in the scheduled 8:30 AM generation and 9:00 AM run.',
+          description: 'Saved. It will be picked up on the next hourly generation and search (up to 3 searches per company per day).',
         });
         return;
       }
@@ -1444,7 +1446,7 @@ export function Dashboard({ userEmail }: DashboardProps) {
                                         Run
                                       </Button>
                                     ) : null}
-                                    {query.webset_runs?.[0]?.webset_id && (
+                                    {query.webset_runs?.[0]?.webset_id && !query.webset_runs[0].webset_id.startsWith('search:') && (
                                       <a
                                         href={`https://websets.exa.ai/websets/${query.webset_runs[0].webset_id}`}
                                         target="_blank"
@@ -2548,7 +2550,7 @@ export function Dashboard({ userEmail }: DashboardProps) {
                   <div className="shrink-0 w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold">2</div>
                   <div>
                     <p className="font-medium text-gray-900 text-sm">Generate searches</p>
-                    <p className="text-xs text-gray-500 mt-0.5">Daily at 8:30 AM, the AI generates fresh searches from your company context and any briefs. You can also add a brief with Queue (runs at 9 AM) or Run now (immediate).</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Hourly, the AI generates searches from queued briefs (and one exploration query per day). You can also add a brief with Queue (next hourly run) or Run now (immediate).</p>
                   </div>
                 </div>
                 <div className="flex gap-3 p-3 rounded-md bg-white/70">
@@ -2578,7 +2580,7 @@ export function Dashboard({ userEmail }: DashboardProps) {
                   </div>
                   <p className="text-xs text-gray-500 mt-0.5">
                     <strong className="text-gray-700">Manual:</strong> preview and edit each draft in Ready to Add, then hit "Create and Start Campaign".{' '}
-                    <strong className="text-gray-700">Autopilot:</strong> every day at 10am ET, the top N qualifying leads get sent automatically with a digest email summarizing what went out.
+                    <strong className="text-gray-700">Autopilot:</strong> at the scheduled hour the top N qualifying leads get sent automatically, remaining daily quota is filled as more leads become ready, and a digest email summarizes the scheduled sweep.
                   </p>
                 </div>
               </div>
@@ -2599,7 +2601,7 @@ export function Dashboard({ userEmail }: DashboardProps) {
                   <Zap className="shrink-0 h-5 w-5 text-green-600 mt-0.5" />
                   <div>
                     <p className="font-medium text-gray-900 text-sm">Autopilot</p>
-                    <p className="text-xs text-gray-500 mt-0.5">Open the Autopilot tab to toggle daily auto-add and configure daily limit, fit score, draft refresh, and digest email. When on, the top qualifying Ready-to-Add leads get auto-added every day at 10am ET with a digest email summarizing what went out.</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Open the Autopilot tab to toggle auto-add and configure daily limit, fit score, draft refresh, and digest email. When on, qualifying Ready-to-Add leads are auto-added at the scheduled hour, then remaining quota is filled the same day as more leads qualify.</p>
                   </div>
                 </div>
               </div>
@@ -2608,11 +2610,10 @@ export function Dashboard({ userEmail }: DashboardProps) {
               <div className="mt-4 pt-4 border-t border-gray-200 space-y-2">
                 <p className="text-xs font-semibold text-gray-700 uppercase tracking-wider">Daily schedule</p>
                 <div className="text-xs text-gray-500 space-y-1.5">
-                  <div className="flex gap-2"><span className="font-mono text-gray-400 w-16 shrink-0">8:30 AM</span><span>Generate new search queries from your instructions</span></div>
-                  <div className="flex gap-2"><span className="font-mono text-gray-400 w-16 shrink-0">9:00 AM</span><span>Run searches, discover leads, enrich and score them</span></div>
-                  <div className="flex gap-2"><span className="font-mono text-gray-400 w-16 shrink-0">10:00 AM</span><span>Autopilot sweep: auto-add top Ready-to-Add leads (if enabled) + digest email</span></div>
-                  <div className="flex gap-2"><span className="font-mono text-gray-400 w-16 shrink-0">Hourly</span><span>Sync campaign status and analytics from Instantly</span></div>
-                  <div className="flex gap-2"><span className="font-mono text-gray-400 w-16 shrink-0">2:00 PM</span><span>Send daily discovery digest email</span></div>
+                  <div className="flex gap-2"><span className="font-mono text-gray-400 w-16 shrink-0">Hourly</span><span>Generate queued briefs (1 exploration query/day) and run pending searches (max 3/company/day)</span></div>
+                  <div className="flex gap-2"><span className="font-mono text-gray-400 w-16 shrink-0">Hourly</span><span>Enrich new leads and sync Instantly campaign analytics</span></div>
+                  <div className="flex gap-2"><span className="font-mono text-gray-400 w-16 shrink-0">Scheduled</span><span>Autopilot sweep at your run hour, then catch-up remaining daily quota</span></div>
+                  <div className="flex gap-2"><span className="font-mono text-gray-400 w-16 shrink-0">2:00 PM ET</span><span>Send daily discovery digest email</span></div>
                 </div>
               </div>
             </div>

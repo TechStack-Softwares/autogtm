@@ -24,27 +24,47 @@ const EmailSequenceSchema = z.object({
   }).optional(),
 });
 
+export const EMAIL_CONTACT_BLOCK = `Kennedy
+Founder
+Bazu LTD`;
+
 function stripForbiddenDashes(text: string): string {
   return text
     .replace(/—/g, ',')
     .replace(/--/g, ',');
 }
 
+/** Strip a trailing sign-off and append the canonical Kennedy / Founder / Bazu LTD block. */
+export function applyContactBlock(body: string): string {
+  let text = (body || '').replace(/[ \t]+$/gm, '').replace(/\s+$/g, '');
+  text = text.replace(
+    /(?:\r?\n[ \t]*){0,3}kennedy(?:\s+founder)?(?:\s+bazu\s*ltd\.?)?(?:\r?\n[ \t]*founder)?(?:\r?\n[ \t]*bazu\s*ltd\.?)?\s*$/i,
+    '',
+  );
+  text = text.replace(
+    /(?:\r?\n[ \t]*){0,2}(?:best(?:\s+regards)?|kind\s+regards|warm(?:ly| regards)?|cheers|thanks|thank you|sincerely|talk soon|all the best)[,!]?\s*(?:\r?\n[ \t]*\S.*){0,4}$/i,
+    '',
+  );
+  text = text.replace(/\s+$/g, '');
+  if (!text) return EMAIL_CONTACT_BLOCK;
+  return `${text}\n\n${EMAIL_CONTACT_BLOCK}`;
+}
+
 function sanitizeSequence(sequence: GeneratedEmailSequence): GeneratedEmailSequence {
   return {
     initial: {
       subject: stripForbiddenDashes(sequence.initial.subject),
-      body: stripForbiddenDashes(sequence.initial.body),
+      body: applyContactBlock(stripForbiddenDashes(sequence.initial.body)),
     },
     followUp1: {
       subject: stripForbiddenDashes(sequence.followUp1.subject),
-      body: stripForbiddenDashes(sequence.followUp1.body),
+      body: applyContactBlock(stripForbiddenDashes(sequence.followUp1.body)),
       delayDays: sequence.followUp1.delayDays,
     },
     followUp2: sequence.followUp2
       ? {
           subject: stripForbiddenDashes(sequence.followUp2.subject),
-          body: stripForbiddenDashes(sequence.followUp2.body),
+          body: applyContactBlock(stripForbiddenDashes(sequence.followUp2.body)),
           delayDays: sequence.followUp2.delayDays,
         }
       : undefined,
@@ -119,7 +139,11 @@ Tone and close:
 - Good: "Would love to explore a partnership if there's a fit." or "I'd love to explore a collab that works for both of us."
 - Bad: "Let me know and I can send over some time to chat." (too vague, no clear outcome)
 - Avoid menu-like "options include..." phrasing unless needed
-- Close naturally with sender name, no template-y language.`;
+- Every email MUST end with this exact 3-line contact block and nothing after it:
+Kennedy
+Founder
+Bazu LTD
+- Do not use Best/Cheers/Thanks, and do not invent a different name, title, or company.`;
 
 /**
  * Generate a complete email sequence (initial + follow-ups)
@@ -144,7 +168,7 @@ export async function generateEmailSequence(params: GenerateEmailParams): Promis
 
   const userPrompt = `Write a ${numFollowUps + 1}-email outreach sequence.
 
-Sender: ${params.companyName}
+Sender: Kennedy, Founder, Bazu LTD
 Product: ${params.companyDescription}
 Value: ${params.valueProposition}
 Persona: ${params.targetPersona}
@@ -153,7 +177,11 @@ CTA: ${cta}
 Remember:
 - The opener must be specifically relevant to this persona/lead context. Not generic.
 - If persona includes lead bio/category/platform details, incorporate them naturally in line 1.
-- Keep tone human and conversational, not polished AI copy.`;
+- Keep tone human and conversational, not polished AI copy.
+- Close every email with exactly:
+Kennedy
+Founder
+Bazu LTD`;
 
   const response = await openai.chat.completions.create({
     model: 'gpt-5-mini',
@@ -304,7 +332,7 @@ You are revising an existing draft sequence based on explicit user feedback.
 
   const userPrompt = `Regenerate this sequence draft.
 
-Sender: ${params.companyName}
+Sender: Kennedy, Founder, Bazu LTD
 Product: ${params.companyDescription}
 Value: ${params.valueProposition}
 Persona: ${params.targetPersona}
@@ -315,7 +343,11 @@ ${JSON.stringify(params.existingSequence, null, 2)}
 User feedback:
 ${params.feedback || 'Improve clarity and make it more personalized.'}
 
-Rewrite the sequence accordingly while keeping it founder-led and grounded.`;
+Rewrite the sequence accordingly while keeping it founder-led and grounded.
+Close every email with exactly:
+Kennedy
+Founder
+Bazu LTD`;
 
   const response = await openai.chat.completions.create({
     model: 'gpt-5-mini',

@@ -3,7 +3,7 @@ import {
   activateCampaign,
   addLeadsToCampaign,
 } from '../clients/instantly';
-import { generateEmailSequence } from '../ai/generateEmailCopy';
+import { applyContactBlock, generateEmailSequence } from '../ai/generateEmailCopy';
 import {
   createCampaign as createCampaignRecord,
   createCampaignEmails,
@@ -139,7 +139,7 @@ export async function sendDraftCampaignForLead(params: {
 
   const sequences = emails.map((email, index) => ({
     subject: email.subject,
-    body: textToHtml(email.body),
+    body: textToHtml(applyContactBlock(email.body)),
     delay: index === 0 ? 0 : email.delay_days,
   }));
 

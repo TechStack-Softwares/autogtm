@@ -18,7 +18,7 @@ Describe your target audience in plain English with optional targeted briefs, an
 4. **Exa runs search and extracts leads** with enrichment hints.
 5. **AI enriches leads** (bio, fit score, contact context).
 6. **AI creates a draft campaign per lead** for review.
-7. **Approve and send** — either you manually review and click "Create and Start Campaign", or **Autopilot** sweeps the backlog daily at 10am ET and sends the top N qualifying leads on its own.
+7. **Approve and send** — either you manually review and click "Create and Start Campaign", or **Autopilot** sweeps the backlog at the configured hour (default 10am ET) and keeps filling remaining daily quota as more leads become ready.
 8. **Instantly status + analytics sync hourly**; daily digest summarizes what went out.
 
 ### Controls
@@ -27,19 +27,20 @@ Describe your target audience in plain English with optional targeted briefs, an
 | Toggle               | What it does                                                                                                                                                                                                                            |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **System ON/OFF**    | Master switch. When OFF, nothing runs. No searches, no enrichment, no campaigns. Turning this off also pauses Autopilot.                                                                                                                |
-| **Autopilot ON/OFF** | When ON, every day at 10am ET the top N Ready-to-Add leads (configurable fit-score threshold + daily limit) are auto-added to their suggested campaigns and a digest email is sent summarizing the run. Configure in the Autopilot tab. |
+| **Autopilot ON/OFF** | When ON, at the configured hour (default 10am ET) the top N Ready-to-Add leads (fit-score threshold + daily limit) are auto-added to their suggested campaigns. Remaining quota is filled later the same day as more leads qualify. A digest email summarizes the scheduled sweep. Configure in the Autopilot tab. |
 
 
 ### Daily schedule
 
 
-| Time        | What happens                                                                          |
-| ----------- | ------------------------------------------------------------------------------------- |
-| 8:30 AM     | Generate queued search queries from briefs and company context                        |
-| 9:00 AM     | Run searches, discover and enrich leads                                               |
-| 10:00 AM ET | **Autopilot sweep** — auto-add top N Ready-to-Add leads + digest email (when enabled) |
-| Hourly      | Sync campaign status and analytics from Instantly                                     |
-| 2:00 PM ET  | Send daily discovery digest email                                                     |
+| Time          | What happens                                                                                          |
+| ------------- | ----------------------------------------------------------------------------------------------------- |
+| Hourly (:00)  | Generate queued briefs; at most one exploration query per company per UTC day                         |
+| Hourly (:20)  | Run pending searches (max 3 per company per day), then enrich and score leads                         |
+| Configured hour (default 10:00 AM ET) | **Autopilot sweep** — auto-add top N Ready-to-Add leads + digest email (when enabled) |
+| Later same day | Autopilot catch-up fills remaining daily quota as enrichment finishes (no extra digest)             |
+| Hourly        | Sync campaign status and analytics from Instantly                                                     |
+| 2:00 PM ET    | Send daily discovery digest email                                                                     |
 
 
 ---

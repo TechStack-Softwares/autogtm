@@ -29,7 +29,7 @@ interface AutoAddRun {
 	digest_sent: boolean;
 	digest_error: string | null;
 	error: string | null;
-	trigger: 'cron' | 'manual';
+	trigger: 'cron' | 'manual' | 'catchup';
 }
 
 interface AutopilotTabProps {
@@ -38,8 +38,7 @@ interface AutopilotTabProps {
 }
 
 // Formats a UTC hour in America/New_York local time, correctly respecting DST
-// so we display "10:00 AM EDT" in summer and "9:00 AM EST" in winter (the cron
-// runs at fixed 14:00 UTC, which maps to different ET wall-clock times by season).
+// so we display "10:00 AM EDT" in summer and "9:00 AM EST" in winter.
 const HOUR_LABEL_ET = (hourUtc: number) => {
 	const d = new Date();
 	d.setUTCHours(hourUtc, 0, 0, 0);
@@ -138,14 +137,14 @@ export function AutopilotTab({ company, onCompanyUpdated }: AutopilotTabProps) {
 	const handleToggleEnabled = async () => {
 		const next = !enabled;
 		if (next) {
-			const msg = `Turn Autopilot ON? Every day at ${HOUR_LABEL_ET(runHourUtc)}, up to ${dailyLimit} Ready-to-Add leads with fit ≥ ${minFitScore} will be auto-added to campaigns.`;
+			const msg = `Turn Autopilot ON? Every day at ${HOUR_LABEL_ET(runHourUtc)}, up to ${dailyLimit} Ready-to-Add leads with fit ≥ ${minFitScore} will be auto-added to campaigns. Remaining quota is filled later the same day as more leads qualify.`;
 			if (!confirm(msg)) return;
 		}
 		await patchCompany({ auto_add_enabled: next }, 'enabled');
 		toast({
 			title: next ? 'Autopilot ON' : 'Autopilot OFF',
 			description: next
-				? `Daily sweep at ${HOUR_LABEL_ET(runHourUtc)} · up to ${dailyLimit}/day · fit ${minFitScore}+`
+				? `Sweep at ${HOUR_LABEL_ET(runHourUtc)} · up to ${dailyLimit}/day · fit ${minFitScore}+ · remaining quota filled later the same day`
 				: 'Manual review mode enabled.',
 		});
 	};
@@ -217,7 +216,7 @@ export function AutopilotTab({ company, onCompanyUpdated }: AutopilotTabProps) {
 							<SavedPing active={!!savedFields.enabled} />
 						</div>
 						<p className="mt-2 text-sm text-gray-600 leading-relaxed">
-							autogtm will auto-add the top <strong className="text-gray-900">{dailyLimit}</strong> Ready-to-Add leads scoring <strong className="text-gray-900">{minFitScore}+</strong> every day at <strong className="text-gray-900">{HOUR_LABEL_ET(runHourUtc)}</strong>, then send a digest email summarizing what went out.
+							autogtm will auto-add the top <strong className="text-gray-900">{dailyLimit}</strong> Ready-to-Add leads scoring <strong className="text-gray-900">{minFitScore}+</strong> every day at <strong className="text-gray-900">{HOUR_LABEL_ET(runHourUtc)}</strong>, then keep filling remaining quota as more leads become ready. A digest email summarizes the scheduled sweep.
 						</p>
 					</div>
 				</div>

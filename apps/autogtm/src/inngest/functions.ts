@@ -1,5 +1,6 @@
 import { inngest } from './client';
-import { getExaClient } from '@autogtm/core/clients/exa';
+import { getExaClient, discoverLeads, formatExaError } from '@autogtm/core/clients/exa';
+import { ingestSearchHits } from '@/app/api/queries/_lib/ingestSearchHits';
 import { enrichLead } from '@autogtm/core/ai/enrichLead';
 import {
   getCampaign,
@@ -14,13 +15,14 @@ import {
   listAutoEnabledCompanies,
   getEligibleLeadsForAutoAdd,
   countReadyToAddLeads,
+  countLeadsAddedToday,
   createAutoAddRun,
   completeAutoAddRun,
 } from '@autogtm/core/db/autogtmDbCalls';
 import { determineCampaignForLead } from '@autogtm/core/ai/determineCampaign';
 import { createDraftCampaignForLead } from '@autogtm/core/campaigns/createCampaignForPersona';
 import { addLeadToCampaignCore, type AddLeadToCampaignResult } from '@autogtm/core/campaigns/addLeadToCampaign';
-import type { AutoAddRunBreakdownEntry } from '@autogtm/core/types';
+import { normalizeLeadCategory, type AutoAddRunBreakdownEntry } from '@autogtm/core/types';
 import { extractEmailFromEnrichmentData } from '@autogtm/core/ai/extractEmail';
 import { resolveOutreachPromptForLead } from '@/lib/outreachPromptResolver';
 import { Resend } from 'resend';
@@ -47,6 +49,37 @@ function mapInstantlyCampaignStatus(status: number): 'draft' | 'active' | 'pause
 async function isSystemEnabled(supabase: any, companyId: string): Promise<boolean> {
   const { data } = await supabase.from('companies').select('system_enabled').eq('id', companyId).single();
   return data?.system_enabled === true;
+}
+
+/** Max Exa webset runs per company per UTC day. Caps spend without blocking the hourly pipeline. */
+const WEBSETS_PER_COMPANY_PER_DAY = 3;
+
+function utcDayStartIso(): string {
+  return `${new Date().toISOString().slice(0, 10)}T00:00:00Z`;
+}
+
+async function countWebsetRunsToday(supabase: any, companyId: string): Promise<number> {
+  const { data: queries } = await supabase.from('exa_queries').select('id').eq('company_id', companyId);
+  const ids = (queries || []).map((q: { id: string }) => q.id);
+  if (ids.length === 0) return 0;
+  const { count } = await supabase
+    .from('webset_runs')
+    .select('id', { count: 'exact', head: true })
+    .in('query_id', ids)
+    .gte('started_at', utcDayStartIso());
+  return count || 0;
+}
+
+async function hasExplorationQueryToday(supabase: any, companyId: string): Promise<boolean> {
+  const { data } = await supabase
+    .from('exa_queries')
+    .select('id')
+    .eq('company_id', companyId)
+    .is('source_instruction_id', null)
+    .gte('created_at', utcDayStartIso())
+    .limit(1)
+    .maybeSingle();
+  return !!data?.id;
 }
 
 /**
@@ -88,13 +121,27 @@ export const processWebsetRun = inngest.createFunction(
     id: 'process-webset-run',
     name: 'Process Webset Run',
     retries: 3,
-    concurrency: [{ limit: 1 }],
+    concurrency: [
+      { key: 'event.data.websetId', limit: 1 },
+      { limit: 5 },
+    ],
+    throttle: { limit: 8, period: '1m' },
   },
   { event: 'autogtm/webset.created' },
   async ({ event, step, logger }) => {
     const { queryId, websetId, websetRunId } = event.data;
     const exa = getExaClient();
     const supabase = getSupabase();
+
+    const alreadyDone = await step.run('check-already-complete', async () => {
+      if (!websetRunId) return false;
+      const { data } = await supabase.from('webset_runs').select('status').eq('id', websetRunId).single();
+      return data?.status === 'completed';
+    });
+    if (alreadyDone) {
+      logger.info(`Webset run ${websetRunId} already completed, skipping`);
+      return { skipped: true, reason: 'already_completed' };
+    }
 
     logger.info(`Processing webset ${websetId} for query ${queryId}`);
 
@@ -254,151 +301,42 @@ export const processWebsetRun = inngest.createFunction(
 );
 
 /**
- * Daily Query Generation - Smart query generation based on instructions
- * 
- * Logic:
- * 1. Check for NEW instructions (query_generated = false)
- * 2. If found: Generate a FOCUSED query for each instruction, link it
- * 3. If none: Generate ONE exploration query (creative, avoids past queries)
- * 
- * Runs at 8:30 AM, before the webset search at 9 AM
+ * Scheduled Query Generation - Fan-out per enabled company.
+ *
+ * Child (`generateQueriesOnDemand`) processes NEW briefs immediately, and
+ * generates at most ONE exploration query per company per UTC day so we
+ * stay productive without flooding Exa with low-signal searches.
  */
 export const dailyQueryGeneration = inngest.createFunction(
   {
     id: 'daily-query-generation',
-    name: 'Daily Query Generation',
+    name: 'Scheduled Query Generation',
   },
-  { cron: '30 8 * * *' }, // 8:30 AM every day
+  { cron: '0 * * * *' },
   async ({ step, logger }) => {
     const supabase = getSupabase();
 
-    // Get all companies with system enabled
     const companies = await step.run('get-companies', async () => {
       const { data } = await supabase
         .from('companies')
-        .select('id, name, website, description, target_audience, agent_notes')
+        .select('id')
         .eq('system_enabled', true);
       return data || [];
     });
 
-    logger.info(`Processing ${companies.length} companies`);
-    let totalQueriesGenerated = 0;
+    logger.info(`Fanning out query generation to ${companies.length} companies`);
 
-    for (const company of companies) {
-      // Check for unprocessed instructions
-      const unprocessedInstructions = await step.run(`check-instructions-${company.id}`, async () => {
-        const { data } = await supabase
-          .from('company_updates')
-          .select('id, content, created_at')
-          .eq('company_id', company.id)
-          .eq('query_generated', false)
-          .order('created_at', { ascending: true }); // Process oldest first
-        return data || [];
-      });
-
-      if (unprocessedInstructions.length > 0) {
-        // FOCUSED MODE: Generate query for each new instruction
-        logger.info(`Found ${unprocessedInstructions.length} new instructions for ${company.name}`);
-
-        for (const instruction of unprocessedInstructions) {
-          await step.run(`focused-query-${instruction.id}`, async () => {
-            const { generateFocusedQuery } = await import('@autogtm/core/ai/generateDailyQuery');
-            
-            const newQuery = await generateFocusedQuery({
-              company: {
-                name: company.name,
-                website: company.website,
-                description: company.description,
-                targetAudience: company.target_audience,
-              },
-              instruction: instruction.content,
-            });
-
-            // Save query with instruction linkage
-            const { error: queryError } = await supabase.from('exa_queries').insert({
-              company_id: company.id,
-              query: newQuery.query,
-              criteria: newQuery.criteria,
-              is_active: true,
-              status: 'pending',
-              source_instruction_id: instruction.id,
-              generation_rationale: newQuery.rationale,
-            });
-
-            if (queryError) {
-              logger.error(`Failed to save focused query:`, queryError);
-              throw queryError;
-            }
-
-            // Mark instruction as processed
-            await supabase
-              .from('company_updates')
-              .update({ query_generated: true })
-              .eq('id', instruction.id);
-
-            logger.info(`Generated focused query for instruction: "${instruction.content.substring(0, 50)}..."`);
-            logger.info(`Query: "${newQuery.query}"`);
-            totalQueriesGenerated++;
-          });
-        }
-      } else {
-        // EXPLORATION MODE: No new instructions, explore creatively
-        await step.run(`exploration-query-${company.id}`, async () => {
-          const { generateExplorationQuery } = await import('@autogtm/core/ai/generateDailyQuery');
-
-          // Get past queries for context
-          const { data: pastQueries } = await supabase
-            .from('exa_queries')
-            .select('query, criteria')
-            .eq('company_id', company.id)
-            .order('created_at', { ascending: false })
-            .limit(20);
-
-          // Get lead counts
-          const pastQueriesWithCounts = await Promise.all(
-            (pastQueries || []).map(async (q) => {
-              const { count } = await supabase
-                .from('leads')
-                .select('*', { count: 'exact', head: true })
-                .eq('query_id', q.query);
-              return { ...q, leads_found: count || 0 };
-            })
-          );
-
-          const newQuery = await generateExplorationQuery({
-            company: {
-              name: company.name,
-              website: company.website,
-              description: company.description,
-              targetAudience: company.target_audience,
-              agentNotes: company.agent_notes,
-            },
-            pastQueries: pastQueriesWithCounts,
-          });
-
-          // Save exploration query (no instruction link)
-          const { error } = await supabase.from('exa_queries').insert({
-            company_id: company.id,
-            query: newQuery.query,
-            criteria: newQuery.criteria,
-            is_active: true,
-            status: 'pending',
-            generation_rationale: newQuery.rationale,
-          });
-
-          if (error) {
-            logger.error(`Failed to save exploration query:`, error);
-            throw error;
-          }
-
-          logger.info(`Generated exploration query for ${company.name}: "${newQuery.query}"`);
-          logger.info(`Rationale: ${newQuery.rationale}`);
-          totalQueriesGenerated++;
-        });
-      }
+    if (companies.length > 0) {
+      await step.sendEvent(
+        'fanout-query-gen',
+        companies.map((c: { id: string }) => ({
+          name: 'autogtm/queries.generate' as const,
+          data: { companyId: c.id, trigger: 'cron' as const },
+        }))
+      );
     }
 
-    return { companiesProcessed: companies.length, queriesGenerated: totalQueriesGenerated };
+    return { companiesProcessed: companies.length };
   }
 );
 
@@ -411,11 +349,12 @@ export const generateQueriesOnDemand = inngest.createFunction(
     id: 'generate-queries-on-demand',
     name: 'Generate Queries On Demand',
     retries: 1,
-    concurrency: [{ limit: 1 }],
+    concurrency: [{ key: 'event.data.companyId', limit: 1 }],
   },
   { event: 'autogtm/queries.generate' },
   async ({ event, step, logger }) => {
-    const { companyId } = event.data;
+    const { companyId, trigger } = event.data as { companyId: string; trigger?: 'cron' | 'manual' };
+    const isScheduled = trigger === 'cron';
     const supabase = getSupabase();
 
     const systemOn = await step.run('check-system', () => isSystemEnabled(supabase, companyId));
@@ -435,7 +374,7 @@ export const generateQueriesOnDemand = inngest.createFunction(
 
     if (!company) throw new Error(`Company ${companyId} not found`);
 
-    let queriesGenerated = 0;
+    const createdQueryIds: string[] = [];
 
     const unprocessedInstructions = await step.run('check-instructions', async () => {
       const { data } = await supabase
@@ -449,38 +388,61 @@ export const generateQueriesOnDemand = inngest.createFunction(
 
     if (unprocessedInstructions.length > 0) {
       for (const instruction of unprocessedInstructions) {
-        await step.run(`focused-query-${instruction.id}`, async () => {
+        const queryId = await step.run(`focused-query-${instruction.id}`, async () => {
           const { generateFocusedQuery } = await import('@autogtm/core/ai/generateDailyQuery');
           const newQuery = await generateFocusedQuery({
             company: { name: company.name, website: company.website, description: company.description, targetAudience: company.target_audience },
             instruction: instruction.content,
           });
-          await supabase.from('exa_queries').insert({
+          const { data, error } = await supabase.from('exa_queries').insert({
             company_id: company.id, query: newQuery.query, criteria: newQuery.criteria,
             is_active: true, status: 'pending', source_instruction_id: instruction.id, generation_rationale: newQuery.rationale,
-          });
+          }).select('id').single();
+          if (error) throw error;
           await supabase.from('company_updates').update({ query_generated: true }).eq('id', instruction.id);
-          queriesGenerated++;
+          return data.id as string;
         });
+        createdQueryIds.push(queryId);
       }
     } else {
-      await step.run('exploration-query', async () => {
+      if (isScheduled) {
+        const already = await step.run('check-exploration-today', () => hasExplorationQueryToday(supabase, company.id));
+        if (already) {
+          logger.info(`Exploration query already generated today for ${company.name}, skipping`);
+          return { queriesGenerated: 0, skipped: true, reason: 'exploration_already_today' };
+        }
+      }
+      const queryId = await step.run('exploration-query', async () => {
         const { generateExplorationQuery } = await import('@autogtm/core/ai/generateDailyQuery');
         const { data: pastQueries } = await supabase.from('exa_queries').select('query, criteria').eq('company_id', company.id).order('created_at', { ascending: false }).limit(20);
         const newQuery = await generateExplorationQuery({
           company: { name: company.name, website: company.website, description: company.description, targetAudience: company.target_audience, agentNotes: company.agent_notes },
           pastQueries: (pastQueries || []).map(q => ({ ...q, leads_found: 0 })),
         });
-        await supabase.from('exa_queries').insert({
+        const { data, error } = await supabase.from('exa_queries').insert({
           company_id: company.id, query: newQuery.query, criteria: newQuery.criteria,
           is_active: true, status: 'pending', generation_rationale: newQuery.rationale,
-        });
-        queriesGenerated++;
+        }).select('id').single();
+        if (error) throw error;
+        return data.id as string;
       });
+      createdQueryIds.push(queryId);
     }
 
-    logger.info(`Generated ${queriesGenerated} queries for ${company.name}`);
-    return { queriesGenerated };
+    // Scheduled generations kick off searches immediately; the hourly webset
+    // cron is a catch-up for anything still pending. Child enforces the daily cap.
+    if (isScheduled && createdQueryIds.length > 0) {
+      await step.sendEvent(
+        'queue-websets',
+        createdQueryIds.map((queryId) => ({
+          name: 'autogtm/daily-webset.run-company' as const,
+          data: { companyId: company.id, companyName: company.name, queryId },
+        }))
+      );
+    }
+
+    logger.info(`Generated ${createdQueryIds.length} queries for ${company.name}`);
+    return { queriesGenerated: createdQueryIds.length, queryIds: createdQueryIds };
   }
 );
 
@@ -492,7 +454,7 @@ export const generateQueryForInstruction = inngest.createFunction(
     id: 'generate-query-for-instruction',
     name: 'Generate Query For Instruction',
     retries: 1,
-    concurrency: [{ limit: 5 }],
+    concurrency: [{ key: 'event.data.instructionId', limit: 1 }],
   },
   { event: 'autogtm/queries.generate-for-instruction' },
   async ({ event, step, logger }) => {
@@ -588,97 +550,169 @@ export const generateQueryForInstruction = inngest.createFunction(
 );
 
 /**
- * Daily Webset Search (parent) - Cron fan-out: gets companies, fires one child event per company
+ * Scheduled Webset Search (parent) - Hourly catch-up: pending queries FIFO,
+ * capped at WEBSETS_PER_COMPANY_PER_DAY. Cron-generated queries also fan out
+ * immediately; this cron picks up anything still queued (manual creates, cap
+ * leftovers, retries).
  */
 export const dailyWebsetSearch = inngest.createFunction(
   {
     id: 'daily-webset-search',
-    name: 'Daily Webset Search',
+    name: 'Scheduled Webset Search',
   },
-  { cron: '0 9 * * *' }, // 9 AM every day
+  { cron: '20 * * * *' },
   async ({ step, logger }) => {
     const supabase = getSupabase();
 
-    const companies = await step.run('get-companies', async () => {
-      const { data } = await supabase.from('companies').select('id, name').eq('system_enabled', true);
-      return data || [];
+    const payloads = await step.run('plan-company-queries', async () => {
+      const { data: companies } = await supabase.from('companies').select('id, name').eq('system_enabled', true);
+      const planned: Array<{ companyId: string; companyName: string; queryId: string }> = [];
+      for (const c of companies || []) {
+        const used = await countWebsetRunsToday(supabase, c.id);
+        const remaining = WEBSETS_PER_COMPANY_PER_DAY - used;
+        if (remaining <= 0) continue;
+        const { data: queries } = await supabase
+          .from('exa_queries')
+          .select('id, status, webset_runs(id)')
+          .eq('company_id', c.id)
+          .eq('is_active', true)
+          .in('status', ['pending', 'failed'])
+          .order('created_at', { ascending: true })
+          .limit(remaining + 10);
+        const eligible = ((queries || []) as Array<{ id: string; status: string; webset_runs?: { id: string }[] | null }>)
+          .filter((q) => q.status === 'pending' || !q.webset_runs?.length)
+          .slice(0, remaining);
+        for (const q of eligible) {
+          planned.push({ companyId: c.id, companyName: c.name, queryId: q.id });
+        }
+      }
+      return planned;
     });
 
-    logger.info(`Fanning out to ${companies.length} companies`);
+    logger.info(`Fanning out ${payloads.length} query runs`);
 
-    if (companies.length > 0) {
-      await step.run('fan-out', () =>
-        inngest.send(
-          companies.map((c) => ({
-            name: 'autogtm/daily-webset.run-company',
-            data: { companyId: c.id, companyName: c.name },
-          }))
-        )
+    if (payloads.length > 0) {
+      await step.sendEvent(
+        'fan-out',
+        payloads.map((p) => ({
+          name: 'autogtm/daily-webset.run-company' as const,
+          data: p,
+        }))
       );
     }
 
-    return { companiesProcessed: companies.length };
+    return { queryRuns: payloads.length };
   }
 );
 
 /**
- * Run company webset search (child) - One query per company, no retries to avoid burning Exa credits
+ * Run company webset search (child) - One query per event.
+ * No retries to avoid burning Exa credits. Per-company concurrency 1 + daily
+ * cap keep quality/spend in check while the parent can queue several queries.
  */
 export const runCompanyWebsetSearch = inngest.createFunction(
   {
     id: 'run-company-webset-search',
     name: 'Run Company Webset Search',
     retries: 0,
+    concurrency: { key: 'event.data.companyId', limit: 1 },
+    throttle: { limit: 2, period: '1m', key: 'event.data.companyId' },
   },
   { event: 'autogtm/daily-webset.run-company' },
   async ({ event, step, logger }) => {
-    const { companyId, companyName } = event.data;
+    const { companyId, companyName, queryId: requestedQueryId } = event.data as {
+      companyId: string;
+      companyName?: string;
+      queryId?: string;
+    };
     const supabase = getSupabase();
 
-    const queryToRun = await step.run('find-query', async () => {
+    const queryToRun = await step.run('claim-query', async () => {
+      const used = await countWebsetRunsToday(supabase, companyId);
+      if (used >= WEBSETS_PER_COMPANY_PER_DAY) return null;
+
+      if (requestedQueryId) {
+        const { data } = await supabase
+          .from('exa_queries')
+          .update({ status: 'running' })
+          .eq('id', requestedQueryId)
+          .eq('company_id', companyId)
+          .eq('is_active', true)
+          .in('status', ['pending', 'failed'])
+          .select('*')
+          .maybeSingle();
+        return data;
+      }
+
       const { data: queries } = await supabase
         .from('exa_queries')
-        .select('*')
+        .select('id')
         .eq('company_id', companyId)
         .eq('is_active', true)
-        .eq('status', 'pending')
-        .order('created_at', { ascending: false })
+        .in('status', ['pending', 'failed'])
+        .order('created_at', { ascending: true })
         .limit(1);
-
-      if (!queries || queries.length === 0) return null;
-      return queries[0];
+      const candidateId = queries?.[0]?.id;
+      if (!candidateId) return null;
+      const { data } = await supabase
+        .from('exa_queries')
+        .update({ status: 'running' })
+        .eq('id', candidateId)
+        .in('status', ['pending', 'failed'])
+        .select('*')
+        .maybeSingle();
+      return data;
     });
 
     if (!queryToRun) {
-      logger.info(`No pending queries for ${companyName ?? companyId}`);
+      logger.info(`No pending queries (or daily cap reached) for ${companyName ?? companyId}`);
       return { skipped: true };
     }
 
     logger.info(`Running query for ${companyName ?? companyId}: "${queryToRun.query}"`);
 
-    await step.run('mark-running', async () => {
-      await supabase.from('exa_queries').update({ status: 'running' }).eq('id', queryToRun.id);
-    });
-
-    const websetId = await step.run('create-webset', async () => {
-      const exa = getExaClient();
-      const websetParams: any = {
-        search: {
+    let discovery: Awaited<ReturnType<typeof discoverLeads>>;
+    try {
+      discovery = await step.run('create-webset', async () => {
+        return discoverLeads({
           query: queryToRun.query,
           count: 25,
-        },
-        enrichments: [
-          { description: 'Find the email address for this person or creator', format: 'email' },
-          { description: 'Extract the follower or subscriber count if visible', format: 'number' },
-        ],
+          criteria: queryToRun.criteria,
+          enrichments: [
+            { description: 'Find the email address for this person or creator', format: 'email' },
+            { description: 'Extract the follower or subscriber count if visible', format: 'number' },
+          ],
+        });
+      });
+    } catch (error) {
+      await step.run('mark-failed', async () => {
+        await supabase.from('exa_queries').update({ status: 'failed' }).eq('id', queryToRun.id);
+      });
+      logger.error(`Exa discovery failed for ${queryToRun.id}: ${formatExaError(error)}`);
+      throw error;
+    }
+
+    if (discovery.mode === 'search') {
+      logger.info(`Websets unavailable; using Exa search fallback for ${queryToRun.id} (${discovery.hits.length} hits)`);
+      const ingested = await step.run('ingest-search-fallback', () =>
+        ingestSearchHits({
+          supabase,
+          queryId: queryToRun.id,
+          companyId,
+          hits: discovery.hits,
+          sendLeadEvents: (events) => inngest.send(events),
+        })
+      );
+      return {
+        companyId,
+        queryId: queryToRun.id,
+        fallback: 'search' as const,
+        itemsFound: ingested.itemsFound,
+        leadsCreated: ingested.leadsCreated,
       };
-      if (queryToRun.criteria && queryToRun.criteria.length > 0) {
-        // Exa rejects websets with > 5 criteria (400 Validation Error)
-        websetParams.search.criteria = queryToRun.criteria.slice(0, 5).map((c: string) => ({ description: c }));
-      }
-      const webset = await exa.websets.create(websetParams);
-      return webset.id;
-    });
+    }
+
+    const websetId = discovery.websetId;
 
     await step.run('dispatch-webset', async () => {
       const { data: websetRun } = await supabase
@@ -1025,9 +1059,11 @@ export const enrichLeadJob = inngest.createFunction(
     id: 'enrich-lead',
     name: 'Enrich Lead',
     retries: 2,
-    concurrency: {
-      limit: 3, // Only 3 concurrent enrichments to avoid rate limits
-    },
+    concurrency: [
+      { key: 'event.data.companyId', limit: 3 },
+      { limit: 8 },
+    ],
+    throttle: { limit: 12, period: '1m' },
   },
   { event: 'autogtm/lead.created' },
   async ({ event, step, logger }) => {
@@ -1094,7 +1130,7 @@ export const enrichLeadJob = inngest.createFunction(
     // Update lead with enriched data + resolved email
     await step.run('update-lead', async () => {
       const updateData: Record<string, any> = {
-        category: enrichedData.category,
+        category: normalizeLeadCategory(enrichedData.category),
         full_name: enrichedData.full_name,
         title: enrichedData.title,
         bio: enrichedData.bio,
@@ -1180,9 +1216,8 @@ export const enrichLeadJob = inngest.createFunction(
       setSuggestedCampaign(leadId, suggestedCampaignId, routingDecision.reason)
     );
 
-    // Autopilot is intentionally NOT triggered inline here. The daily Auto Add Sweep
-    // (`autoAddSweep`) scours the "Ready to Add" backlog once per day and routes the
-    // top N qualifying leads, respecting the per-company daily_limit and min_fit_score.
+    // Autopilot is not triggered inline. The scheduled sweep plus same-day catch-up
+    // (`autoAddSweep`) pick Ready-to-Add leads, still gated by daily_limit and min_fit_score.
     return { leadId, fullName: enrichedData.full_name, category: enrichedData.category, fitScore: enrichedData.promotion_fit_score, routing: { action: 'suggested', campaignId: suggestedCampaignId } };
   }
 );
@@ -1211,26 +1246,45 @@ export const addLeadToCampaignJob = inngest.createFunction(
 );
 
 /**
- * Auto Add Sweep - Scours the "Ready to Add" backlog once per day and routes
- * the top N qualifying leads for each company that has autopilot enabled.
- * Runs at 14:00 UTC (10am ET) — after discovery (09:00) and enrichment have
- * had time to settle on the day's freshest leads.
+ * Auto Add Sweep - Hourly planner.
+ * At each company's `auto_add_run_hour_utc` (default 14 / 10am ET): primary
+ * sweep + digest. Later hours the same UTC day: catch-up that fills remaining
+ * daily_limit as enrichment finishes, without extra digest emails.
  */
 export const autoAddSweep = inngest.createFunction(
   { id: 'auto-add-sweep', name: 'Auto Add Sweep' },
-  { cron: '0 14 * * *' },
+  { cron: '5 * * * *' },
   async ({ step, logger }) => {
     const companies = await step.run('list-auto-enabled-companies', () => listAutoEnabledCompanies());
-    logger.info(`Autopilot sweep: ${companies.length} enabled companies`);
+    const hour = new Date().getUTCHours();
 
-    if (companies.length === 0) return { companies: 0 };
+    const planned = await step.run('plan-sweeps', async () => {
+      const events: Array<{ companyId: string; trigger: 'cron' | 'catchup' }> = [];
+      for (const c of companies) {
+        const runHour = c.auto_add_run_hour_utc ?? 14;
+        if (hour === runHour) {
+          events.push({ companyId: c.id, trigger: 'cron' });
+          continue;
+        }
+        if (hour > runHour) {
+          const added = await countLeadsAddedToday(c.id);
+          const remaining = (c.auto_add_daily_limit ?? 5) - added;
+          if (remaining > 0) events.push({ companyId: c.id, trigger: 'catchup' });
+        }
+      }
+      return events;
+    });
 
-    await step.sendEvent('fanout-auto-sweep', companies.map((c) => ({
+    logger.info(`Autopilot sweep hour=${hour}: ${planned.length} company events (${companies.length} enabled)`);
+
+    if (planned.length === 0) return { companies: companies.length, events: 0 };
+
+    await step.sendEvent('fanout-auto-sweep', planned.map((p) => ({
       name: 'autogtm/auto-add.sweep-company' as const,
-      data: { companyId: c.id, trigger: 'cron' as const },
+      data: { companyId: p.companyId, trigger: p.trigger },
     })));
 
-    return { companies: companies.length };
+    return { companies: companies.length, events: planned.length };
   }
 );
 
@@ -1247,7 +1301,7 @@ export const autoAddSweepCompany = inngest.createFunction(
   },
   { event: 'autogtm/auto-add.sweep-company' },
   async ({ event, step, logger }) => {
-    const { companyId, trigger } = event.data as { companyId: string; trigger: 'cron' | 'manual' };
+    const { companyId, trigger } = event.data as { companyId: string; trigger: 'cron' | 'manual' | 'catchup' };
     const supabase = getSupabase();
 
     // Load company + verify autopilot still on (prefs may have flipped between fanout and run)
@@ -1277,7 +1331,7 @@ export const autoAddSweepCompany = inngest.createFunction(
       logger.info(`Autopilot sweep: company ${companyId} has System OFF, skipping (even for manual triggers)`);
       return { skipped: true, reason: 'system_disabled' };
     }
-    if (!company.auto_add_enabled && trigger === 'cron') {
+    if (!company.auto_add_enabled && trigger !== 'manual') {
       logger.info(`Autopilot sweep: company ${companyId} disabled, skipping`);
       return { skipped: true, reason: 'disabled' };
     }
@@ -1286,28 +1340,55 @@ export const autoAddSweepCompany = inngest.createFunction(
     const dailyLimit = company.auto_add_daily_limit ?? 5;
     const regenerateDraftFirst = company.auto_add_regenerate_drafts === true;
 
-    const run = await step.run('create-run', () =>
-      createAutoAddRun({ companyId, minFitScore, dailyLimit, trigger })
-    );
+    const addedToday = await step.run('count-added-today', () => countLeadsAddedToday(companyId));
+    const remaining = trigger === 'manual'
+      ? dailyLimit
+      : Math.max(0, dailyLimit - addedToday);
 
     if (dailyLimit <= 0) {
+      if (trigger === 'catchup') return { skipped: true, reason: 'daily_limit_zero' };
+      const run = await step.run('create-run-zero-limit', () =>
+        createAutoAddRun({ companyId, minFitScore, dailyLimit, trigger })
+      );
       await step.run('complete-run-zero-limit', () =>
         completeAutoAddRun(run.id, { leads_considered: 0, leads_added: 0, leads_skipped: 0, error: null })
       );
       return { runId: run.id, added: 0, reason: 'daily_limit_zero' };
     }
 
+    if (remaining <= 0) {
+      if (trigger === 'catchup') return { skipped: true, reason: 'daily_limit_reached' };
+      const run = await step.run('create-run-capped', () =>
+        createAutoAddRun({ companyId, minFitScore, dailyLimit, trigger })
+      );
+      await step.run('complete-run-capped', () =>
+        completeAutoAddRun(run.id, { leads_considered: 0, leads_added: 0, leads_skipped: 0, error: null })
+      );
+      return { runId: run.id, added: 0, reason: 'daily_limit_reached' };
+    }
+
     const candidates = await step.run('fetch-candidates', () =>
-      getEligibleLeadsForAutoAdd(companyId, minFitScore, dailyLimit)
+      getEligibleLeadsForAutoAdd(companyId, minFitScore, remaining)
     );
 
     if (candidates.length === 0) {
+      if (trigger === 'catchup') {
+        logger.info(`Autopilot catch-up: company ${companyId} — 0 qualifying leads, skipping`);
+        return { skipped: true, reason: 'no_candidates' };
+      }
+      const run = await step.run('create-run-empty', () =>
+        createAutoAddRun({ companyId, minFitScore, dailyLimit, trigger })
+      );
       await step.run('complete-run-empty', () =>
         completeAutoAddRun(run.id, { leads_considered: 0, leads_added: 0, leads_skipped: 0, error: null })
       );
       logger.info(`Autopilot sweep: company ${companyId} — 0 qualifying leads, skipping digest`);
       return { runId: run.id, added: 0 };
     }
+
+    const run = await step.run('create-run', () =>
+      createAutoAddRun({ companyId, minFitScore, dailyLimit, trigger })
+    );
 
     // Route each lead synchronously so we can collect a breakdown.
     const perCampaign = new Map<string, { count: number; totalScore: number }>();
@@ -1369,10 +1450,10 @@ export const autoAddSweepCompany = inngest.createFunction(
       countReadyToAddLeads(companyId, minFitScore)
     );
 
-    // Send digest email (skip on zero-add days per product decision)
+    // Digest only on the scheduled/manual sweep — catch-up fills quota without inbox noise.
     let digestSent = false;
     let digestError: string | null = null;
-    if (addedLeadIds.length > 0) {
+    if (addedLeadIds.length > 0 && trigger !== 'catchup') {
       const digestResult = await step.run('send-digest', async () => {
         const envRecipients = process.env.DIGEST_RECIPIENTS?.split(',').map((s) => s.trim()).filter(Boolean) || [];
         const recipients = company.auto_add_digest_email?.trim()
@@ -1448,13 +1529,13 @@ function renderAutoAddDigestHtml(params: {
   backlogRemaining: number;
   minFitScore: number;
   dailyLimit: number;
-  trigger: 'cron' | 'manual';
+  trigger: 'cron' | 'manual' | 'catchup';
   appUrl: string;
   regeneratedCount: number;
 }): string {
   const { companyName, leadsAdded, leadsSkipped, breakdown, topLeads, skipReasons, backlogRemaining, minFitScore, dailyLimit, trigger, appUrl, regeneratedCount } = params;
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const triggerLabel = trigger === 'manual' ? 'Manual run' : 'Daily run';
+  const triggerLabel = trigger === 'manual' ? 'Manual run' : trigger === 'catchup' ? 'Catch-up run' : 'Daily run';
 
   const breakdownRows = breakdown.map((b) => `
     <tr>

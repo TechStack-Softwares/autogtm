@@ -705,11 +705,24 @@ export async function countReadyToAddLeads(companyId: string, minFitScore: numbe
   return count || 0;
 }
 
+/** Sum of leads actually added by Autopilot for this company since 00:00 UTC. */
+export async function countLeadsAddedToday(companyId: string): Promise<number> {
+  const supabase = getSupabaseClient();
+  const dayStart = `${new Date().toISOString().slice(0, 10)}T00:00:00Z`;
+  const { data, error } = await supabase
+    .from('auto_add_runs')
+    .select('leads_added')
+    .eq('company_id', companyId)
+    .gte('run_started_at', dayStart);
+  if (error) throw error;
+  return (data || []).reduce((sum, row: { leads_added: number | null }) => sum + (row.leads_added || 0), 0);
+}
+
 export async function createAutoAddRun(params: {
   companyId: string;
   minFitScore: number;
   dailyLimit: number;
-  trigger: 'cron' | 'manual';
+  trigger: 'cron' | 'manual' | 'catchup';
 }): Promise<AutoAddRun> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase

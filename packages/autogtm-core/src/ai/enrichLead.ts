@@ -5,10 +5,10 @@
 
 import OpenAI from 'openai';
 import { z } from 'zod';
-import type { EnrichedLeadData } from '../types';
+import { normalizeLeadCategory, type EnrichedLeadData } from '../types';
 
 const EnrichedLeadSchema = z.object({
-  category: z.string().catch('other'),
+  category: z.preprocess(normalizeLeadCategory, z.enum(['influencer', 'coach', 'blog', 'agency', 'podcast', 'other'])),
   full_name: z.string().catch('Unknown'),
   title: z.string().catch(''),
   bio: z.string().catch(''),
@@ -16,7 +16,7 @@ const EnrichedLeadSchema = z.object({
   social_links: z.record(z.unknown()).catch({}),
   total_audience: z.number().catch(0),
   content_types: z.array(z.string()).catch([]),
-  promotion_fit_score: z.number().catch(5),
+  promotion_fit_score: z.number().catch(5).transform((n) => Math.min(10, Math.max(1, Math.round(n)))),
   promotion_fit_reason: z.string().catch(''),
   email: z.string().nullable().catch(null),
 });
@@ -57,7 +57,7 @@ ${JSON.stringify(leadData, null, 2).slice(0, 5000)}
 - Target audience: ${companyContext.targetAudience}
 
 Return JSON with these fields:
-1. **category**: What they are (influencer, coach, blog, agency, podcast, or anything else that fits)
+1. **category**: MUST be exactly one of: influencer, coach, blog, agency, podcast, other. Use other if none fit. Never invent a new label.
 2. **full_name**: Their actual name
 3. **title**: Professional title (e.g., "Acting Coach", "Podcast Host")
 4. **bio**: 2-3 sentence summary

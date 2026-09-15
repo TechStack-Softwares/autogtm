@@ -18,14 +18,17 @@ export async function POST(
       websetId: result.websetId,
       status: result.status,
       message: result.message,
+      mode: result.mode,
+      leadsCreated: result.leadsCreated ?? 0,
     });
   } catch (error) {
     if (error instanceof Error && error.message === 'Query not found') {
       return NextResponse.json({ error: 'Query not found' }, { status: 404 });
     }
     console.error('Error running query:', error);
+    const message = error instanceof Error ? error.message : 'Failed to run query';
     return NextResponse.json(
-      { error: 'Failed to run query' },
+      { error: message },
       { status: 500 }
     );
   }

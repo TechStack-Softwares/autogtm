@@ -35,6 +35,50 @@ export interface WebsetSearchResult {
   totalItems: number;
 }
 
+export interface ExaSearchHit {
+  id: string;
+  url: string;
+  title: string | null;
+  author?: string;
+  publishedDate?: string;
+  text?: string;
+  highlights?: string[];
+}
+
+export type DiscoveryResult =
+  | { mode: 'webset'; websetId: string }
+  | { mode: 'search'; hits: ExaSearchHit[] };
+
+const SEARCH_FALLBACK_PREFIX = 'search:';
+
+export function isSearchFallbackId(websetId: string | null | undefined): boolean {
+  return typeof websetId === 'string' && websetId.startsWith(SEARCH_FALLBACK_PREFIX);
+}
+
+export function newSearchFallbackId(): string {
+  return `${SEARCH_FALLBACK_PREFIX}${crypto.randomUUID()}`;
+}
+
+export function isExaWebsetsUnauthorized(error: unknown): boolean {
+  const err = error as { message?: string; statusCode?: number; error?: string; body?: unknown };
+  const raw = [err?.message, err?.error, typeof err?.body === 'string' ? err.body : '']
+    .filter(Boolean)
+    .join(' ');
+  if (err?.statusCode === 401) return true;
+  return /upgrade to a pro plan|does not have access to the api/i.test(raw);
+}
+
+export function formatExaError(error: unknown): string {
+  const err = error as { message?: string; statusCode?: number; error?: string; body?: unknown };
+  const raw = [err?.message, err?.error, typeof err?.body === 'string' ? err.body : '']
+    .filter(Boolean)
+    .join(' ');
+  if (isExaWebsetsUnauthorized(error)) {
+    return 'Exa Websets requires a Pro plan. Falling back to regular Exa search when available. Upgrade at https://dashboard.exa.ai';
+  }
+  return err?.message || raw || 'Failed to start Exa search';
+}
+
 /**
  * Create a new Exa Webset with search and optional enrichments
  */
@@ -61,6 +105,44 @@ export async function createWebset(params: CreateWebsetParams): Promise<string> 
 
   const webset = await exa.websets.create(websetParams);
   return webset.id;
+}
+
+/**
+ * Regular Exa search + page contents. Used when Websets is unavailable on the
+ * current plan (401 / "upgrade to Pro"). Emails are resolved later by enrichment.
+ */
+export async function searchPeoplePages(params: {
+  query: string;
+  count?: number;
+}): Promise<ExaSearchHit[]> {
+  const exa = getExaClient();
+  const response = await exa.searchAndContents(params.query, {
+    type: 'auto',
+    numResults: params.count || 25,
+    text: { maxCharacters: 2000 },
+    highlights: true,
+  });
+  return (response.results || []).map((r) => ({
+    id: r.id,
+    url: r.url,
+    title: r.title ?? null,
+    author: r.author,
+    publishedDate: r.publishedDate,
+    text: (r as { text?: string }).text,
+    highlights: (r as { highlights?: string[] }).highlights,
+  })).filter((r) => typeof r.url === 'string' && r.url.length > 0);
+}
+
+/** Try Websets first; fall back to /search when the key has no Websets access. */
+export async function discoverLeads(params: CreateWebsetParams): Promise<DiscoveryResult> {
+  try {
+    const websetId = await createWebset(params);
+    return { mode: 'webset', websetId };
+  } catch (error) {
+    if (!isExaWebsetsUnauthorized(error)) throw error;
+    const hits = await searchPeoplePages({ query: params.query, count: params.count });
+    return { mode: 'search', hits };
+  }
 }
 
 /**
