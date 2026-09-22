@@ -1,18 +1,15 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { resetPassword, signIn, signUp, updatePassword } from '@/lib/supabase/actions';
 import { useToast } from '@/components/ui/use-toast';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 
 export default function LoginPage() {
-  const router = useRouter();
   const { toast } = useToast();
-  const supabase = createClient();
-
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -34,6 +31,8 @@ export default function LoginPage() {
       const accessToken = params.get('access_token');
       const refreshToken = params.get('refresh_token');
       if (accessToken && refreshToken) {
+        // Recovery tokens live in the URL hash and never reach the server.
+        const supabase = createClient();
         supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken }).then(() => {
           setIsRecovery(true);
         });
@@ -60,9 +59,9 @@ export default function LoginPage() {
     setIsSubmitting(true);
     setErrorMessage('');
     try {
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
-      if (error) {
-        setErrorMessage(error.message);
+      const result = await updatePassword(newPassword);
+      if (result.error) {
+        setErrorMessage(result.error);
         return;
       }
       toast({ title: 'Password updated', description: 'You are now signed in.' });
@@ -80,11 +79,9 @@ export default function LoginPage() {
     setForgotMessage('');
     setErrorMessage('');
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
-        redirectTo: `${window.location.origin}/login`,
-      });
-      if (error) {
-        setErrorMessage(error.message);
+      const result = await resetPassword(forgotEmail);
+      if (result.error) {
+        setErrorMessage(result.error);
         return;
       }
       setForgotMessage('Reset link sent — check your email (and spam folder).');
@@ -127,18 +124,14 @@ export default function LoginPage() {
 
     try {
       if (isSigningUp) {
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { data: { user_type: 'autogtm' } },
-        });
+        const result = await signUp(email, password);
 
-        if (error) {
-          setErrorMessage(error.message);
+        if (result.error) {
+          setErrorMessage(result.error);
           return;
         }
 
-        if (data?.user?.identities?.length === 0) {
+        if (result.alreadyExists) {
           setErrorMessage('You already have an account. Please log in instead.');
           return;
         }
@@ -147,13 +140,11 @@ export default function LoginPage() {
         setIsSigningUp(false);
         setIsInviteValidated(false);
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-
-        if (error) {
-          setErrorMessage(error.message);
+        const result = await signIn(email, password);
+        if (result.error) {
+          setErrorMessage(result.error);
           return;
         }
-
         window.location.href = '/app';
       }
     } catch (err) {

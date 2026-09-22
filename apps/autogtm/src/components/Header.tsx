@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
+import { signOut } from '@/lib/supabase/actions';
 import { Button } from '@/components/ui/button';
 import { LogOut, Plus, Building2 } from 'lucide-react';
 
@@ -19,7 +19,6 @@ interface HeaderProps {
 
 export function Header({ userEmail }: HeaderProps) {
   const router = useRouter();
-  const supabase = createClient();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -63,8 +62,8 @@ export function Header({ userEmail }: HeaderProps) {
   };
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    router.push('/login');
+    await signOut();
+    window.location.href = '/login';
   };
 
   return (

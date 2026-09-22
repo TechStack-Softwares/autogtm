@@ -30,7 +30,13 @@ export function getSupabaseClient(): SupabaseClient {
       throw new Error('Supabase credentials are required');
     }
     
-    _supabaseClient = createClient(url, key);
+    _supabaseClient = createClient(url, key, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    });
   }
   return _supabaseClient;
 }

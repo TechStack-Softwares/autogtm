@@ -26,14 +26,11 @@ import { normalizeLeadCategory, type AutoAddRunBreakdownEntry } from '@autogtm/c
 import { extractEmailFromEnrichmentData } from '@autogtm/core/ai/extractEmail';
 import { resolveOutreachPromptForLead } from '@/lib/outreachPromptResolver';
 import { Resend } from 'resend';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 const getResend = () => new Resend(process.env.RESEND_API_KEY);
 
-const getSupabase = () => createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY!
-);
+const getSupabase = () => createAdminClient();
 
 function mapInstantlyCampaignStatus(status: number): 'draft' | 'active' | 'paused' | 'completed' {
   // Instantly status codes: 0=draft, 1=active, 2=paused, 3=completed, 4=sub-sequences running.

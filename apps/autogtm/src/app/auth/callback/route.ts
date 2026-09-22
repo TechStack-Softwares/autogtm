@@ -1,5 +1,4 @@
-import { createServerClient } from '@supabase/ssr';
-import { cookies } from 'next/headers';
+import { createClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function GET(request: NextRequest) {
@@ -8,49 +7,15 @@ export async function GET(request: NextRequest) {
   const next = searchParams.get('next') ?? '/';
 
   if (code) {
-    const cookieStore = await cookies();
-    
-    // IMPORTANT: Force read cookies before creating Supabase client
-    // Next.js cookies() is lazy - this forces it to actually read them
-    const allCookies = cookieStore.getAll();
-    console.log('Available cookies:', allCookies.map(c => c.name));
-    
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
-      {
-        cookies: {
-          getAll() {
-            return cookieStore.getAll();
-          },
-          setAll(cookiesToSet: { name: string; value: string; options?: any }[]) {
-            try {
-              cookiesToSet.forEach(({ name, value, options }) => {
-                cookieStore.set(name, value, options);
-              });
-            } catch {
-              // Ignore errors from Server Components
-            }
-          },
-        },
-      }
-    );
-
-    // Force read cookies again before exchange (per Next.js 14 workaround)
-    cookieStore.getAll();
-    
+    const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
-    
-    // Read cookies again after exchange
-    cookieStore.getAll();
-    
+
     if (!error) {
       return NextResponse.redirect(new URL(next, origin));
     }
-    
+
     console.error('Auth callback error:', error);
   }
 
-  // Return to login with error
   return NextResponse.redirect(new URL('/login?error=auth', origin));
 }
